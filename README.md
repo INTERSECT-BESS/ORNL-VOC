@@ -22,7 +22,7 @@ The program output will be:
 
 A .csv file with the average of each gas over all valid measurements for each plant.
 
-A list of plants with unusual data defined as PC Pressure outside the range 320-480 or gas 21 m/z outside the range 1760-2640 for at least one measurement.
+A list of plants with unusual data defined as PC Pressure outside the range 320-480 or gas 21 m/z greater/less than the LICOR's blanks' average by +/- 25% for at least one measurement.
 
 A list for each plant of those gases with average values greater than one standard deviation of blank measurements for that LICOR above the average of the blank measurements for that LICOR for that gas.
 
