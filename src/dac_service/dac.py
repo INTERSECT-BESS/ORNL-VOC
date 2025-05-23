@@ -2,6 +2,7 @@ import argparse
 
 import pandas as pd
 
+from collections import Counter
 from datetime import datetime
 
 def data_reduction(df, metadata, cutoff):
@@ -24,7 +25,9 @@ def data_reduction(df, metadata, cutoff):
                     [ "list of gases for plant1 with concentrations above the threshold of 0.00005 and 3 * blank std" ]
                 }
             },
-            high_variance": [ "list of gases with a standard deviation over plants of at least the cutoff argument " ]
+            "high_variance": [ "list of gases with a standard deviation over plants of at least the cutoff argument " ],
+            "prevalences" : "sorted dataframe where each row is a gas name and the percentage of plants for which 
+                that gas was above the threshold in above_threshold"
         }
     '''
     
@@ -32,12 +35,11 @@ def data_reduction(df, metadata, cutoff):
     df = df[:][df.DO1 == 1]
     
     # Convert all time strings into hour + minute datetimes
-    df["time_string"] = df["time_string"].apply(lambda x: x.to_pydatetime().time())
+    df["time_string"] = df["time_string"].apply(lambda x: x.to_pydatetime())
     
     
     # Convert all time strings into hour + minute datetimes
-    metadata["PTR Start Time"] = metadata["PTR Start Time"].apply(lambda x: x.to_pydatetime().time())   
-    #metadata["PTR Start Time"].apply(lambda x: x.dt.time)
+    metadata["PTR Start Time"] = metadata["PTR Start Time"].apply(lambda x: x.to_pydatetime())   
     
     # Divide the results of the two LICORs.
     licor_names = metadata.LICOR.unique()
@@ -47,6 +49,9 @@ def data_reduction(df, metadata, cutoff):
     
     # Dictionary from LICOR names to the data for that LICOR's blanks
     blanks_per_licor = {}
+    
+    # Dictionary from LICOR names to the mean values for 21mz concentrations for that LICOR
+    blank_21mz_mean_per_licor = {}
     
     # Dictionary from LICOR names to three times the Standard Deviation for the measurements on that LICOR's blank or the 
     # floor value of 5 x 10 ^ -12
@@ -94,10 +99,13 @@ def data_reduction(df, metadata, cutoff):
         
         # Combine the first and last blank measurements
         blank = pd.concat(blanks)
-        
+    
+        # Save the 21 m/z mean before we delete it
+        blank_21mz_mean_per_licor[licor] = blank["21 m/z"].mean()
+                
         # Remove all the metadata columns
         blank = remove_non_gas_columns(blank)
-    
+        
         # Make a copy of the blank's data and take the average of each gas's concentration
         blank_mean = blank.copy()
         blank_mean[blank_mean.columns.difference(['time_string', 'time_number'])] = \
@@ -113,8 +121,8 @@ def data_reduction(df, metadata, cutoff):
         
         blank_std_per_licor[licor] = blank_std
         
-        # The index for the current measurement for this LICOR. Start at 1 to skip the initial blank
-        i = 1
+        # The index for the current measurement for this LICOR.
+        i = 0
         df_per_licor[licor] = {}
         
         # Iterate through all metadata rows for measurments, stopping before the last measurement which will be the second
@@ -157,10 +165,16 @@ def data_reduction(df, metadata, cutoff):
     
     # Find all abnormal tags
     for licor in licor_names:
+        
+        # Calculate the minimum/maximum expected 21 m/z as the blank's avererage +/- 25%
+        blank_mean = blank_21mz_mean_per_licor[licor]
+        min_21_mz = blank_mean - (blank_mean * 0.25)
+        max_21_mz = blank_mean + (blank_mean * 0.25)
+        
         for plant_tag in df_per_licor[licor].keys():
             plant_df = df_per_licor[licor][plant_tag]
-            if (plant_df["21 m/z"] <= 1760).any() or \
-                (plant_df["21 m/z"] >= 2640).any() or \
+            if (plant_df["21 m/z"] <= min_21_mz).any() or \
+                (plant_df["21 m/z"] >= max_21_mz).any() or \
                 (plant_df["PC_Pressure"] <= 320).any() or \
                 (plant_df["PC_Pressure"] >= 480).any():
                 abnormal_tags.append(plant_tag)
@@ -201,9 +215,20 @@ def data_reduction(df, metadata, cutoff):
             plant_tags.append(plant_tag)
             full_df.append(plant_df)
             
-    # Combine list of plant dataframes into one full dataframe        
-    full_df = pd.DataFrame(full_df)
+    # Create a list of all gases that were above the threshold, appearing a number of times equal to the number of
+    # plants for which each was above the threshold
+    full_above_threshold_gas_list = []
     
+    for plant in plants_to_gases:
+        full_above_threshold_gas_list += plants_to_gases[plant]
+    
+    # Create a sorted data frame of percentages of plants each gas appeared in
+    gas_prevalences = pd.DataFrame(Counter(full_above_threshold_gas_list).items(), columns=['Gas', 'Prevalence'])
+    gas_prevalences['Prevalence'] = gas_prevalences['Prevalence'].apply(lambda x: x / len(plants_to_gases.keys()))
+    gas_prevalences = gas_prevalences.sort_values('Prevalence',ascending=False).reset_index(drop=True)
+            
+    # Combine list of plant dataframes into one full dataframe        
+    full_df = pd.DataFrame(full_df)    
     
     #high_variance = full_df.apply(lambda x: True if x.max() * 0.95 >= x.min() else False, axis=0)
     # We take as high varience those gases whose standard deviation over plant species is > 0.1
@@ -220,6 +245,7 @@ def data_reduction(df, metadata, cutoff):
     output["abnormal"] = abnormal_tags
     output["above_threshold"] = plants_to_gases
     output["high_variance"] = high_variance.to_list()
+    output["gas_prevelances"] = gas_prevalences
     
     # Create the output csv file.
     return output
@@ -277,6 +303,7 @@ if __name__ == "__main__":
     data, metadata = load_files(args.data, args.sheet, args.metadata)
     pd.set_option('display.max_colwidth', None)
     pd.set_option('display.max_columns', None)
+    pd.set_option('display.max_rows', None)
 
     output = data_reduction(data, metadata, args.cutoff)
     with open("out.csv", "w") as out_file:
@@ -287,5 +314,7 @@ if __name__ == "__main__":
     for plant in output["above_threshold"]:
         print("\nGases above threshold detected for plant " + plant)
         print(output["above_threshold"][plant])
+    print("\nGases with the percentage of plants for which they were above the concentration threshold:")
+    print(output["gas_prevelances"])
     print("\nGases with high variance over different plant species")
     print(output["high_variance"])

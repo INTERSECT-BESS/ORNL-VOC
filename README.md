@@ -26,4 +26,6 @@ A list of plants with unusual data defined as PC Pressure outside the range 320-
 
 A list for each plant of those gases with average values greater than one standard deviation of blank measurements for that LICOR above the average of the blank measurements for that LICOR for that gas.
 
+A sorted table of gas names to the percentage of plants for which that gas was above the threshold in the above list.
+
 A list of those gases where the standard deviation of gas measurements for all measurements over all plants is greater than or equal to the user provided cutoff value defined previously.
